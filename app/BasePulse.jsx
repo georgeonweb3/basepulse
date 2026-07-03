@@ -96,7 +96,7 @@ function useFarcasterContext() {
     (async () => {
       try {
         // !! In production: import sdk from "@farcaster/frame-sdk"
-        const mod = await import("https://esm.sh/@farcaster/frame-sdk@0.0.28").catch(() => null);
+        const mod = await import("@farcaster/frame-sdk").catch(() => null);
         if (!mod || cancelled) return;
         const sdk = mod.default ?? mod.sdk ?? mod;
         const ctx = await sdk.context;
