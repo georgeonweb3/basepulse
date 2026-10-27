@@ -1,9 +1,9 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 
-const API = "https://basepulse-trust.onrender.com";
-const MAX_RETRIES = 4;
-const RETRY_DELAY_MS = 8000; // 8s between retries — gives Render time to wake
+const API = "/api/score"; // same-origin proxy (Render API has no CORS headers)
+const MAX_RETRIES = 2;
+const RETRY_DELAY_MS = 5000;
 
 export function useTrustScore(address) {
   const [profile, setProfile]   = useState(null);
@@ -12,7 +12,7 @@ export function useTrustScore(address) {
 
   const fetchScore = useCallback(async (addr, tryNum) => {
     try {
-      const res = await fetch(`${API}/score/${addr}`, { signal: AbortSignal.timeout(15000) });
+      const res = await fetch(`${API}/${addr}`, { signal: AbortSignal.timeout(60000) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setProfile({

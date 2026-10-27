@@ -237,20 +237,21 @@ function AnimatedScore({ target=0 }) {
     const tick=now=>{const t=Math.min((now-t0)/1800,1),e=t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;setCount(Math.round(e*target));if(t<1)f=requestAnimationFrame(tick);};
     f=requestAnimationFrame(tick);return()=>cancelAnimationFrame(f);
   },[target]);
-  const tier=count>=800?"Platinum":count>=600?"Gold":count>=400?"Silver":"Bronze";
-  const tc=count>=800?"#7C3AED":count>=600?T.amber:count>=400?"#6B7280":"#92400E";
-  const tb=count>=800?"#F5F3FF":count>=600?T.amberLight:count>=400?"#F3F4F6":"#FFFBEB";
+  const tier=count>=80?"Platinum":count>=60?"Gold":count>=40?"Silver":"Bronze";
+  const tc=count>=80?"#7C3AED":count>=60?T.amber:count>=40?"#6B7280":"#92400E";
+  const tb=count>=80?"#F5F3FF":count>=60?T.amberLight:count>=40?"#F3F4F6":"#FFFBEB";
   return (
     <div style={{display:"flex",alignItems:"baseline",gap:8}}>
       <span style={{fontSize:52,fontWeight:700,color:T.text,letterSpacing:"-0.05em",lineHeight:1}}>{count.toLocaleString()}</span>
-      <span style={{fontSize:14,color:T.textSub,fontWeight:500}}>/1000</span>
+      <span style={{fontSize:14,color:T.textSub,fontWeight:500}}>/100</span>
       <Badge color={tc} bg={tb}>{tier}</Badge>
     </div>
   );
 }
 
 // ── TrustCard ─────────────────────────────────────────────────────────────────
-function TrustCard({ profile, scoreLoading }) {
+function TrustCard({ profile, scoreLoading, address, receiptCount }) {
+  const { streak } = useOnchainCheckIn(address);
   return (
     <motion.div initial={{opacity:0,y:24}} animate={{opacity:1,y:0}} transition={{duration:.5,delay:.1}}
       style={{background:T.surface,borderRadius:24,boxShadow:T.shadowMd,overflow:"hidden"}}>
@@ -283,12 +284,12 @@ function TrustCard({ profile, scoreLoading }) {
         </div>
         <AnimatedScore target={profile.trustScore}/>
         <div style={{marginTop:14,height:6,background:"#E5E7EB",borderRadius:99,overflow:"hidden"}}>
-          <motion.div initial={{width:0}} animate={{width:`${(profile.trustScore/1000)*100}%`}}
+          <motion.div initial={{width:0}} animate={{width:`${Math.min(profile.trustScore,100)}%`}}
             transition={{duration:1.8,delay:.3,ease:[.25,.46,.45,.94]}}
             style={{height:"100%",borderRadius:99,background:`linear-gradient(90deg,${T.blue},#4F46E5)`}}/>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:1,background:T.border,borderRadius:16,overflow:"hidden",marginTop:20}}>
-          {[["Receipts",profile.receipts??0,"📋"],["Disputes","0","🛡️"],["Streak","—","🔥"]].map(([l,v,i])=>(
+          {[["Receipts",receiptCount??0,"📋"],["Base txs",(profile.raw?.txCount??0).toLocaleString(),"⛓️"],["Streak",streak>0?`${streak}d`:"—","🔥"]].map(([l,v,i])=>(
             <div key={l} style={{background:T.surface,padding:"14px 8px",textAlign:"center"}}>
               <div style={{fontSize:18,marginBottom:4}}>{i}</div>
               <div style={{fontSize:18,fontWeight:700,color:T.text,letterSpacing:"-0.03em"}}>{v}</div>
@@ -586,11 +587,11 @@ function FrameContextBanner({ frameCtx }) {
 }
 
 // ── Views ─────────────────────────────────────────────────────────────────────
-function DashboardView({ profile, receipts, onMint, onFlag, walletConnected, address, onCheckIn, scoreLoading }) {
+function DashboardView({ profile, receipts, receiptCount, onMint, onFlag, walletConnected, address, onCheckIn, scoreLoading }) {
   return (
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))",gap:20}}>
       <div style={{display:"flex",flexDirection:"column",gap:20}}>
-        <TrustCard profile={profile} scoreLoading={scoreLoading}/>
+        <TrustCard profile={profile} scoreLoading={scoreLoading} address={address} receiptCount={receiptCount}/>
         <ReceiptForm onMint={onMint} walletConnected={walletConnected}/>
         <CheckInCard address={address} walletConnected={walletConnected} onSuccess={onCheckIn}/>
       </div>
@@ -748,7 +749,7 @@ export default function BasePulse() {
     switch(activeNav){
       case "save":     return <SavingsHome deployment={deployment} isMiniApp={!!frameCtx} toast={toast}/>;
       case "circles":  return <CirclesView deployment={deployment} inviteId={inviteId} clearInvite={clearInvite} toast={toast}/>;
-      case "pulse":    return <DashboardView profile={profile} receipts={receipts} onMint={handleMint} onFlag={handleFlag} walletConnected={isConnected} address={address} onCheckIn={handleCheckIn} scoreLoading={scoreLoading}/>;
+      case "pulse":    return <DashboardView profile={profile} receipts={receipts} receiptCount={chainReceipts.length} onMint={handleMint} onFlag={handleFlag} walletConnected={isConnected} address={address} onCheckIn={handleCheckIn} scoreLoading={scoreLoading}/>;
       case "receipts": return <ReceiptsView receipts={receipts} onFlag={handleFlag}/>;
       case "settings": return <SettingsView profile={profile} connected={isConnected} address={address}/>;
       default:         return null;
