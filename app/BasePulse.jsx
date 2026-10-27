@@ -1,10 +1,10 @@
 "use client";
 /**
- * BasePulse.jsx – v5
- * - Real RainbowKit ConnectButton
+ * BasePulse.jsx – v6
+ * - RainbowKit wallet connect, forced onto Base mainnet
  * - Trust score with retry (handles Render cold start)
- * - Check-in: once per day per wallet, streak counter, stored in localStorage
- * - Check-in sends ETH via eth_sendTransaction directly (no chainId enforcement)
+ * - Receipts + daily check-ins live in the BasePulseReceipts contract on Base
+ *   (address from NEXT_PUBLIC_RECEIPT_CONTRACT), read back from chain
  * - Farcaster Frame SDK hydration
  */
 
@@ -15,20 +15,15 @@ import {
   useAccount,
   useWaitForTransactionReceipt,
   useDisconnect,
+  useReadContract,
+  useWriteContract,
 } from "wagmi";
+import { RECEIPT_CONTRACT_ADDRESS, RECEIPT_CONTRACT_ABI, CONTRACT_READY } from "./contract";
 import { useTrustScore } from "./useTrustScore";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const BASE_CHAIN_ID   = 8453;
 const BASE_RPC        = "https://mainnet.base.org";
-const CHECKIN_WEI     = "0x" + (30000000000000n).toString(16); // 0.00003 ETH in hex wei
-
-// Receipt contract – replace with your deployed contract
-const RECEIPT_CONTRACT_ADDRESS = "0x0000000000000000000000000000000000000001";
-const RECEIPT_CONTRACT_ABI = [
-  { name:"mintReceipt", type:"function", stateMutability:"nonpayable",
-    inputs:[{name:"txHash",type:"bytes32"},{name:"label",type:"string"}], outputs:[] },
-];
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 const T = {
@@ -51,57 +46,63 @@ const MOCK_PROFILE = {
   trustScore:0, receipts:0, liquidity:0, verified:false,
 };
 
-const SEED_RECEIPTS = [
-  { hash:"0x3a9f...c821", label:"Swap on Uniswap", ts:"2h ago",  status:"verified", amount:"+$420"   },
-  { hash:"0xb71c...f034", label:"NFT Purchase",    ts:"1d ago",  status:"verified", amount:"+$88"    },
-  { hash:"0x9a4e...2b17", label:"Bridge from L1",  ts:"3d ago",  status:"flagged",  amount:"+$1,200" },
-];
 
-// ── Hook: useCheckIn ──────────────────────────────────────────────────────────
-// Manages once-per-day check-in logic and streak counter.
-// Stores data in localStorage keyed by wallet address.
-function useCheckIn(address) {
-  const storageKey = address ? `basepulse_checkin_${address.toLowerCase()}` : null;
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const shortHash = h => (h && h.length > 20 ? `${h.slice(0,10)}…${h.slice(-6)}` : h);
+function timeAgo(sec) {
+  const d = Math.max(0, Math.floor(Date.now()/1000) - Number(sec));
+  if (d < 60) return "just now";
+  if (d < 3600) return `${Math.floor(d/60)}m ago`;
+  if (d < 86400) return `${Math.floor(d/3600)}h ago`;
+  return `${Math.floor(d/86400)}d ago`;
+}
+function txError(e) {
+  if (e?.code === 4001 || /reject|denied|cancel/i.test(e?.message || "")) return "Transaction cancelled.";
+  const m = e?.shortMessage || e?.message || "Transaction failed.";
+  if (/AlreadyCheckedInToday/.test(m)) return "Already checked in today.";
+  if (/DuplicateReceipt/.test(m)) return "You already anchored this transaction.";
+  if (/LabelTooLong/.test(m)) return "Label must be 64 characters or fewer.";
+  return m;
+}
 
-  const getState = useCallback(() => {
-    if (!storageKey || typeof window === "undefined") return { streak:0, lastDate:null, totalCheckIns:0 };
-    try {
-      return JSON.parse(localStorage.getItem(storageKey) || "{}");
-    } catch { return {}; }
-  }, [storageKey]);
-
-  const [checkInState, setCheckInState] = useState(() => ({ streak:0, lastDate:null, totalCheckIns:0 }));
-
-  // Load from storage on address change
-  useEffect(() => {
-    if (!storageKey) return;
-    setCheckInState(s => ({ streak:0, lastDate:null, totalCheckIns:0, ...getState() }));
-  }, [storageKey, getState]);
-
-  const todayStr = () => new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
-
-  const canCheckInToday = () => {
-    const state = getState();
-    return state.lastDate !== todayStr();
+// ── Hook: useOnchainCheckIn ───────────────────────────────────────────────────
+// Reads streak/total from the contract; the contract enforces once per UTC day.
+function useOnchainCheckIn(address) {
+  const enabled = !!address && CONTRACT_READY;
+  const state = useReadContract({
+    address: RECEIPT_CONTRACT_ADDRESS, abi: RECEIPT_CONTRACT_ABI, chainId: BASE_CHAIN_ID,
+    functionName: "checkIns", args: address ? [address] : undefined, query: { enabled },
+  });
+  const streak = useReadContract({
+    address: RECEIPT_CONTRACT_ADDRESS, abi: RECEIPT_CONTRACT_ABI, chainId: BASE_CHAIN_ID,
+    functionName: "currentStreak", args: address ? [address] : undefined, query: { enabled },
+  });
+  const can = useReadContract({
+    address: RECEIPT_CONTRACT_ADDRESS, abi: RECEIPT_CONTRACT_ABI, chainId: BASE_CHAIN_ID,
+    functionName: "canCheckIn", args: address ? [address] : undefined, query: { enabled },
+  });
+  const refetch = useCallback(() => { state.refetch(); streak.refetch(); can.refetch(); }, [state, streak, can]);
+  return {
+    streak: Number(streak.data ?? 0),
+    totalCheckIns: Number(state.data?.[2] ?? 0),
+    canCheckInToday: can.data ?? true,
+    refetch,
   };
+}
 
-  const recordCheckIn = useCallback(() => {
-    if (!storageKey) return;
-    const state = getState();
-    const today = todayStr();
-    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-    const newStreak = state.lastDate === yesterday ? (state.streak || 0) + 1 : 1;
-    const newState = {
-      streak: newStreak,
-      lastDate: today,
-      totalCheckIns: (state.totalCheckIns || 0) + 1,
-    };
-    localStorage.setItem(storageKey, JSON.stringify(newState));
-    setCheckInState(newState);
-    return newState;
-  }, [storageKey, getState]);
-
-  return { checkInState, canCheckInToday, recordCheckIn };
+// ── Hook: useOnchainReceipts ──────────────────────────────────────────────────
+function useOnchainReceipts(address) {
+  const q = useReadContract({
+    address: RECEIPT_CONTRACT_ADDRESS, abi: RECEIPT_CONTRACT_ABI, chainId: BASE_CHAIN_ID,
+    functionName: "getReceipts", args: address ? [address, 0n, 50n] : undefined,
+    query: { enabled: !!address && CONTRACT_READY },
+  });
+  const receipts = (q.data || []).map(r => ({
+    hash: shortHash(r.txHash), fullHash: r.txHash,
+    label: r.label || "On-chain Receipt",
+    ts: timeAgo(r.timestamp), status: "verified", amount: "Anchored",
+  }));
+  return { receipts, refetch: q.refetch, loading: q.isLoading };
 }
 
 // ── Hook: useFarcasterContext ─────────────────────────────────────────────────
@@ -316,21 +317,19 @@ function TrustCard({ profile, scoreLoading }) {
 
 // ── CheckInCard ───────────────────────────────────────────────────────────────
 function CheckInCard({ address, walletConnected, onSuccess }) {
-  const { checkInState, canCheckInToday, recordCheckIn } = useCheckIn(address);
-  const [status, setStatus] = useState("idle"); // idle | pending | confirming | success | already | error
-  const [txHash, setTxHash] = useState(null);
+  const { streak, totalCheckIns, canCheckInToday, refetch } = useOnchainCheckIn(address);
+  const [status, setStatus] = useState("idle"); // idle | pending | confirming | success | error
   const [errMsg, setErrMsg] = useState("");
+  const { writeContractAsync, data: txHash } = useWriteContract();
 
   const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
-    hash: txHash,
-    chainId: BASE_CHAIN_ID,
-    query: { enabled: !!txHash },
+    hash: txHash, chainId: BASE_CHAIN_ID, query: { enabled: !!txHash },
   });
 
   useEffect(() => {
     if (!isConfirmed || !txHash) return;
-    const newState = recordCheckIn();
-    onSuccess?.({ txHash, streak: newState.streak, total: newState.totalCheckIns });
+    refetch();
+    onSuccess?.({ txHash, streak: streak + 1, total: totalCheckIns + 1 });
     setStatus("success");
   }, [isConfirmed, txHash]); // eslint-disable-line
 
@@ -339,38 +338,21 @@ function CheckInCard({ address, walletConnected, onSuccess }) {
   }, [isConfirming]); // eslint-disable-line
 
   const handleCheckIn = async () => {
-    if (!walletConnected || !address) return;
-    if (!canCheckInToday()) { setStatus("already"); return; }
-
-    setStatus("pending");
-    setErrMsg("");
-
+    if (!walletConnected || !address || !CONTRACT_READY || !canCheckInToday) return;
+    setStatus("pending"); setErrMsg("");
     try {
-      // Use window.ethereum directly — avoids wagmi chain enforcement issues
-      const provider = window.ethereum;
-      if (!provider) throw new Error("No wallet provider found");
-
-      const hash = await provider.request({
-        method: "eth_sendTransaction",
-        params: [{
-          from:  address,
-          to:    address, // send to self
-          value: CHECKIN_WEI,
-          // No chainId here — let the wallet use its current chain
-        }],
+      await writeContractAsync({
+        address: RECEIPT_CONTRACT_ADDRESS, abi: RECEIPT_CONTRACT_ABI,
+        functionName: "checkIn", chainId: BASE_CHAIN_ID,
       });
-      setTxHash(hash);
     } catch (e) {
-      setErrMsg(e?.message?.includes("rejected") || e?.code === 4001
-        ? "Transaction cancelled."
-        : e?.message || "Transaction failed.");
-      setStatus("error");
+      setErrMsg(txError(e)); setStatus("error");
       setTimeout(() => setStatus("idle"), 3000);
     }
   };
 
-  const alreadyToday = !canCheckInToday();
-  const { streak=0, totalCheckIns=0 } = checkInState;
+  const canCheckInTodayFn = () => canCheckInToday;
+  const alreadyToday = !canCheckInTodayFn();
 
   return (
     <motion.div initial={{opacity:0,y:24}} animate={{opacity:1,y:0}} transition={{duration:.5,delay:.3}}
@@ -378,7 +360,7 @@ function CheckInCard({ address, walletConnected, onSuccess }) {
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
         <div>
           <div style={{fontSize:16,fontWeight:700,color:T.text,letterSpacing:"-0.02em"}}>Daily Check-In</div>
-          <div style={{fontSize:12,color:T.textSub,marginTop:3}}>Leave a ~$0.01 on-chain footprint on Base</div>
+          <div style={{fontSize:12,color:T.textSub,marginTop:3}}>Build an on-chain streak on Base · gas only</div>
         </div>
         <div style={{fontSize:24}}>📍</div>
       </div>
@@ -430,11 +412,11 @@ function CheckInCard({ address, walletConnected, onSuccess }) {
         :status==="confirming" ? <><Spinner/>Anchoring to Base…</>
         :status==="success"    ? <>✓ Checked In! Streak: {streak} 🔥</>
         :alreadyToday          ? <>✓ Checked in today</>
-        :                        <>📍 Check In (~$0.01 ETH)</>}
+        :                        <>📍 Check In</>}
       </motion.button>
 
       <div style={{marginTop:10,fontSize:11,color:T.textMuted,textAlign:"center"}}>
-        Sends 0.00003 ETH to your own wallet · once per day
+        Recorded in the BasePulse contract · once per UTC day · no ETH sent
       </div>
     </motion.div>
   );
@@ -446,7 +428,7 @@ function ReceiptForm({ onMint, walletConnected }) {
   const [label,setLabel]=useState("");
   const [error,setError]=useState("");
   const [status,setStatus]=useState("idle");
-  const [submittedHash,setSubmittedHash]=useState(null);
+  const { writeContractAsync, data: submittedHash } = useWriteContract();
 
   const { isLoading:isConfirming, isSuccess:isConfirmed } = useWaitForTransactionReceipt({
     hash:submittedHash, chainId:BASE_CHAIN_ID, query:{enabled:!!submittedHash},
@@ -456,29 +438,27 @@ function ReceiptForm({ onMint, walletConnected }) {
     if(!isConfirmed||!submittedHash)return;
     onMint?.({hash:submittedHash,label:label||"On-chain Receipt"});
     setStatus("success");
-    const t=setTimeout(()=>{setStatus("idle");setHash("");setLabel("");setSubmittedHash(null);},2600);
+    const t=setTimeout(()=>{setStatus("idle");setHash("");setLabel("");},2600);
     return()=>clearTimeout(t);
   },[isConfirmed,submittedHash]); // eslint-disable-line
 
-  const isValid=h=>/^0x[0-9a-fA-F]{64}$/.test(h)||h.length>8;
+  useEffect(()=>{ if(isConfirming) setStatus("confirming"); },[isConfirming]);
+
+  const isValid=h=>/^0x[0-9a-fA-F]{64}$/.test(h);
 
   const handleSubmit=async()=>{
     if(!walletConnected){setError("Connect your wallet first.");return;}
-    if(!hash.trim()){setError("Transaction hash required.");return;}
+    if(!CONTRACT_READY){setError("Receipt contract not configured yet.");return;}
+    if(!isValid(hash)){setError("Enter a full 66-character transaction hash (0x + 64 hex).");return;}
+    if(new TextEncoder().encode(label).length>64){setError("Label must be 64 characters or fewer.");return;}
     setError("");setStatus("pending");
     try {
-      const provider=window.ethereum;
-      if(!provider)throw new Error("No wallet");
-      // Encode the call manually since we can't use useWriteContract without a real contract
-      // For now, send a minimal ETH transfer as a placeholder until contract is deployed
-      const txHash=await provider.request({
-        method:"eth_sendTransaction",
-        params:[{from:walletConnected,to:RECEIPT_CONTRACT_ADDRESS,value:"0x0",data:"0x"}],
+      await writeContractAsync({
+        address:RECEIPT_CONTRACT_ADDRESS, abi:RECEIPT_CONTRACT_ABI,
+        functionName:"mintReceipt", args:[hash, label], chainId:BASE_CHAIN_ID,
       });
-      setSubmittedHash(txHash);
-      setStatus("confirming");
     } catch(e){
-      setError(e?.code===4001?"Transaction cancelled.":e?.message||"Failed.");
+      setError(txError(e));
       setStatus("idle");
     }
   };
@@ -509,7 +489,7 @@ function ReceiptForm({ onMint, walletConnected }) {
         </div>
         <div>
           <label style={{fontSize:11,fontWeight:600,color:T.textSub,letterSpacing:"0.04em",textTransform:"uppercase",display:"block",marginBottom:6}}>Label <span style={{color:T.textMuted,textTransform:"none",fontWeight:400}}>(optional)</span></label>
-          <input value={label} onChange={e=>setLabel(e.target.value)} placeholder="e.g. Swap on Uniswap…"
+          <input value={label} maxLength={64} onChange={e=>setLabel(e.target.value)} placeholder="e.g. Swap on Uniswap…"
             style={{width:"100%",background:T.bg,border:`1.5px solid ${T.border}`,borderRadius:12,padding:"12px 14px",fontSize:13,color:T.text}}
             onFocus={e=>e.target.style.borderColor=T.blue} onBlur={e=>e.target.style.borderColor=T.border}/>
         </div>
@@ -644,6 +624,7 @@ function DashboardView({ profile, receipts, onMint, onFlag, walletConnected, add
             <div><div style={{fontSize:16,fontWeight:700,color:T.text}}>Verified Receipts</div><div style={{fontSize:12,color:T.textSub,marginTop:2}}>{receipts.length} total · {receipts.filter(r=>r.status!=="flagged").length} verified</div></div>
             <Badge color={T.blue} bg={T.blueLight}>{receipts.length}</Badge>
           </div>
+          {receipts.length===0&&<div style={{padding:"18px 0 4px",fontSize:12,color:T.textMuted}}>No receipts yet. Anchor a Base transaction to start your on-chain record.</div>}
           <AnimatePresence>{receipts.map((r,i)=><ReceiptItem key={r.hash+i} receipt={r} index={i} onFlag={onFlag} total={receipts.length}/>)}</AnimatePresence>
         </motion.div>
       </div>
@@ -657,7 +638,7 @@ function ReceiptsView({ receipts, onFlag }) {
     <motion.div key="receipts" initial={{opacity:0,y:16}} animate={{opacity:1,y:0}} transition={{duration:.35}}>
       <div style={{marginBottom:24}}><h2 style={{fontSize:22,fontWeight:700,color:T.text}}>Receipts</h2><p style={{fontSize:13,color:T.textSub,marginTop:4}}>{receipts.length} total · {verified} verified · {receipts.length-verified} in review</p></div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:14,marginBottom:20}}>
-        {[{label:"Total Value",val:"$1,708",icon:"💰",color:T.blue,bg:T.blueLight},{label:"Verified",val:verified,icon:"✅",color:T.green,bg:T.greenLight},{label:"Under Review",val:receipts.length-verified,icon:"⏳",color:T.amber,bg:T.amberLight}].map(c=>(
+        {[{label:"Total Receipts",val:receipts.length,icon:"📜",color:T.blue,bg:T.blueLight},{label:"Verified",val:verified,icon:"✅",color:T.green,bg:T.greenLight},{label:"Under Review",val:receipts.length-verified,icon:"⏳",color:T.amber,bg:T.amberLight}].map(c=>(
           <motion.div key={c.label} initial={{opacity:0,scale:.97}} animate={{opacity:1,scale:1}} style={{background:T.surface,borderRadius:18,boxShadow:T.shadow,padding:"20px 22px",display:"flex",alignItems:"center",gap:14}}>
             <div style={{width:42,height:42,borderRadius:12,background:c.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>{c.icon}</div>
             <div><div style={{fontSize:22,fontWeight:700,color:T.text}}>{c.val}</div><div style={{fontSize:12,color:T.textSub}}>{c.label}</div></div>
@@ -668,7 +649,8 @@ function ReceiptsView({ receipts, onFlag }) {
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
           <div style={{fontSize:15,fontWeight:700,color:T.text}}>All Receipts</div><Badge color={T.blue} bg={T.blueLight}>{receipts.length}</Badge>
         </div>
-        <AnimatePresence>{receipts.map((r,i)=><ReceiptItem key={r.hash+i} receipt={r} index={i} onFlag={onFlag} total={receipts.length}/>)}</AnimatePresence>
+        {receipts.length===0&&<div style={{padding:"18px 0 4px",fontSize:12,color:T.textMuted}}>No receipts yet. Anchor a Base transaction to start your on-chain record.</div>}
+          <AnimatePresence>{receipts.map((r,i)=><ReceiptItem key={r.hash+i} receipt={r} index={i} onFlag={onFlag} total={receipts.length}/>)}</AnimatePresence>
       </motion.div>
     </motion.div>
   );
@@ -742,7 +724,9 @@ export default function BasePulse() {
   const { profile: liveProfile, loading: scoreLoading } = useTrustScore(address);
   const { frameCtx } = useFarcasterContext();
 
-  const [receipts,setReceipts]         = useState(SEED_RECEIPTS);
+  const { receipts: chainReceipts, refetch: refetchReceipts } = useOnchainReceipts(address);
+  const [localEvents,setLocalEvents]   = useState([]); // check-ins this session (shown alongside receipts)
+  const receipts = [...localEvents, ...chainReceipts];
   const [activeNav,setActiveNav]       = useState("pulse");
   const [notification,setNotification] = useState(null);
 
@@ -758,15 +742,14 @@ export default function BasePulse() {
     setTimeout(()=>setNotification(null),3200);
   },[]);
 
-  const handleMint = useCallback(({hash,label})=>{
-    const sh=hash.length>20?`${hash.slice(0,10)}…${hash.slice(-6)}`:hash;
-    setReceipts(prev=>[{hash:sh,label,ts:"just now",status:"verified",amount:"+$?",isNew:true},...prev]);
-    toast("Receipt minted on Base ✓");
-  },[toast]);
+  const handleMint = useCallback(()=>{
+    refetchReceipts();
+    toast("Receipt anchored on Base ✓");
+  },[toast,refetchReceipts]);
 
   const handleFlag    = useCallback(()=>toast("24-hour hold initiated ⏳","warning"),[toast]);
   const handleCheckIn = useCallback(({txHash,streak,total})=>{
-    setReceipts(prev=>[{hash:txHash,label:`Daily Check-In · Day ${total}`,ts:"just now",status:"verified",amount:"-0.00003 ETH",isNew:true},...prev]);
+    setLocalEvents(prev=>[{hash:shortHash(txHash),label:`Daily Check-In · Day ${total}`,ts:"just now",status:"verified",amount:"Check-in",isNew:true},...prev]);
     toast(`Check-in confirmed! 🔥 ${streak}-day streak`);
   },[toast]);
 

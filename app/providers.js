@@ -1,15 +1,19 @@
 "use client";
-import { WagmiProvider, createConfig, http } from "wagmi";
+import { WagmiProvider, http } from "wagmi";
 import { base } from "wagmi/chains";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RainbowKitProvider, getDefaultConfig } from "@rainbow-me/rainbowkit";
 import "@rainbow-me/rainbowkit/styles.css";
 
+// Free WalletConnect project ID from https://cloud.reown.com — needed for mobile wallets.
+const projectId = process.env.NEXT_PUBLIC_WC_PROJECT_ID || "basepulse-dev";
+
 const config = getDefaultConfig({
   appName: "BasePulse",
-  projectId: "YOUR_PROJECT_ID_HERE",
+  projectId,
   chains: [base],
   transports: { [base.id]: http("https://mainnet.base.org") },
+  ssr: true,
 });
 
 const queryClient = new QueryClient();
@@ -18,7 +22,7 @@ export function Providers({ children }) {
   return (
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
-        <RainbowKitProvider>{children}</RainbowKitProvider>
+        <RainbowKitProvider initialChain={base}>{children}</RainbowKitProvider>
       </QueryClientProvider>
     </WagmiProvider>
   );

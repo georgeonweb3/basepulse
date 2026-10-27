@@ -1,0 +1,5 @@
+node_modules
+.next
+.env*.local
+contracts/out
+contracts/cache
