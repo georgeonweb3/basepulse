@@ -1,8 +1,16 @@
+import { Attribution } from "ox/erc8021";
 // BasePulseReceipts on Base mainnet (chain 8453).
 // Deployed Oct 27, 2026 via CREATE2, tx 0x3a54b6a79a81bda04e6b384e5be31352021f9a97a68b63e93f415489e3b53ff3.
 // NEXT_PUBLIC_RECEIPT_CONTRACT can override it.
 export const RECEIPT_CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_RECEIPT_CONTRACT || "0x2A46AeA3A312d6555936f57bA3d0bE533EeD4586";
 export const CONTRACT_READY = /^0x[0-9a-fA-F]{40}$/.test(RECEIPT_CONTRACT_ADDRESS);
+
+// Base Builder Code (ERC-8021 attribution). Get it at base.dev → Settings → Builder Code,
+// then set NEXT_PUBLIC_BUILDER_CODE in Vercel. Appended to every BasePulse transaction.
+const BUILDER_CODE = process.env.NEXT_PUBLIC_BUILDER_CODE || "";
+export const DATA_SUFFIX = /^[a-z0-9_]{1,32}$/.test(BUILDER_CODE)
+  ? Attribution.toDataSuffix({ codes: [BUILDER_CODE] })
+  : undefined;
 
 export const RECEIPT_CONTRACT_ABI = [
   {
