@@ -7,7 +7,7 @@ export const CONTRACT_READY = /^0x[0-9a-fA-F]{40}$/.test(RECEIPT_CONTRACT_ADDRES
 
 // Base Builder Code (ERC-8021 attribution). Get it at base.dev → Settings → Builder Code,
 // then set NEXT_PUBLIC_BUILDER_CODE in Vercel. Appended to every BasePulse transaction.
-const BUILDER_CODE = process.env.NEXT_PUBLIC_BUILDER_CODE || "";
+const BUILDER_CODE = process.env.NEXT_PUBLIC_BUILDER_CODE || "bc_mpa1zfrz";
 export const DATA_SUFFIX = /^[a-z0-9_]{1,32}$/.test(BUILDER_CODE)
   ? Attribution.toDataSuffix({ codes: [BUILDER_CODE] })
   : undefined;

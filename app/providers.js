@@ -6,7 +6,7 @@ import { RainbowKitProvider, getDefaultConfig } from "@rainbow-me/rainbowkit";
 import "@rainbow-me/rainbowkit/styles.css";
 
 // Free WalletConnect project ID from https://cloud.reown.com — needed for mobile wallets.
-const projectId = process.env.NEXT_PUBLIC_WC_PROJECT_ID || "basepulse-dev";
+const projectId = process.env.NEXT_PUBLIC_WC_PROJECT_ID || "077790c9ce50381f09e13b97f8e88155";
 
 const config = getDefaultConfig({
   appName: "BasePulse",
