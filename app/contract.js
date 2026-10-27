@@ -1,7 +1,7 @@
 // BasePulseReceipts on Base mainnet (chain 8453).
-// Set NEXT_PUBLIC_RECEIPT_CONTRACT in Vercel → Project → Settings → Environment Variables
-// after deploying contracts/src/BasePulseReceipts.sol.
-export const RECEIPT_CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_RECEIPT_CONTRACT || "";
+// Deployed Oct 27, 2026 via CREATE2, tx 0x3a54b6a79a81bda04e6b384e5be31352021f9a97a68b63e93f415489e3b53ff3.
+// NEXT_PUBLIC_RECEIPT_CONTRACT can override it.
+export const RECEIPT_CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_RECEIPT_CONTRACT || "0x2A46AeA3A312d6555936f57bA3d0bE533EeD4586";
 export const CONTRACT_READY = /^0x[0-9a-fA-F]{40}$/.test(RECEIPT_CONTRACT_ADDRESS);
 
 export const RECEIPT_CONTRACT_ABI = [
