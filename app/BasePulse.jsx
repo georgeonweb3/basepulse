@@ -18,7 +18,7 @@ import {
   useReadContract,
   useWriteContract,
 } from "wagmi";
-import { RECEIPT_CONTRACT_ADDRESS, RECEIPT_CONTRACT_ABI, CONTRACT_READY } from "./contract";
+import { RECEIPT_CONTRACT_ADDRESS, RECEIPT_CONTRACT_ABI, CONTRACT_READY, DATA_SUFFIX } from "./contract";
 import { useTrustScore } from "./useTrustScore";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -343,7 +343,7 @@ function CheckInCard({ address, walletConnected, onSuccess }) {
     try {
       await writeContractAsync({
         address: RECEIPT_CONTRACT_ADDRESS, abi: RECEIPT_CONTRACT_ABI,
-        functionName: "checkIn", chainId: BASE_CHAIN_ID,
+        functionName: "checkIn", chainId: BASE_CHAIN_ID, dataSuffix: DATA_SUFFIX,
       });
     } catch (e) {
       setErrMsg(txError(e)); setStatus("error");
@@ -455,7 +455,7 @@ function ReceiptForm({ onMint, walletConnected }) {
     try {
       await writeContractAsync({
         address:RECEIPT_CONTRACT_ADDRESS, abi:RECEIPT_CONTRACT_ABI,
-        functionName:"mintReceipt", args:[hash, label], chainId:BASE_CHAIN_ID,
+        functionName:"mintReceipt", args:[hash, label], chainId:BASE_CHAIN_ID, dataSuffix:DATA_SUFFIX,
       });
     } catch(e){
       setError(txError(e));
