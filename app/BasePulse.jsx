@@ -1,6 +1,8 @@
 "use client";
 /**
- * BasePulse.jsx – v6
+ * BasePulse.jsx – v7
+ * - Streak savings (BasePulseSavings) is the main product: Save + Circles tabs
+ * - Trust score / receipts / network live under the secondary "Trust" tab
  * - RainbowKit wallet connect, forced onto Base mainnet
  * - Trust score with retry (handles Render cold start)
  * - Receipts + daily check-ins live in the BasePulseReceipts contract on Base
@@ -20,24 +22,14 @@ import {
 } from "wagmi";
 import { RECEIPT_CONTRACT_ADDRESS, RECEIPT_CONTRACT_ABI, CONTRACT_READY, DATA_SUFFIX } from "./contract";
 import { useTrustScore } from "./useTrustScore";
+import { T, Badge, Spinner } from "./ui";
+import { SavingsHome, CirclesView } from "./Savings";
+import { useSavingsDeployment } from "./useSavings";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const BASE_CHAIN_ID   = 8453;
 const BASE_RPC        = "https://mainnet.base.org";
 
-// ── Design tokens ─────────────────────────────────────────────────────────────
-const T = {
-  bg:"#F9FAFB", surface:"#FFFFFF", surfaceHover:"#F3F4F6",
-  border:"rgba(0,0,0,0.06)", text:"#111827", textSub:"#6B7280", textMuted:"#9CA3AF",
-  blue:"#0052FF", blueLight:"#EEF3FF", blueMid:"#3B73FF",
-  green:"#10B981", greenLight:"#ECFDF5",
-  amber:"#F59E0B", amberLight:"#FFFBEB",
-  red:"#EF4444", redLight:"#FEF2F2",
-  purple:"#7C3AED", purpleLight:"#F5F3FF",
-  shadow:"0 1px 3px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04)",
-  shadowMd:"0 4px 24px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.04)",
-  shadowBlue:"0 8px 32px rgba(0,82,255,0.18)",
-};
 
 // ── Seed data ─────────────────────────────────────────────────────────────────
 const MOCK_PROFILE = {
@@ -189,12 +181,6 @@ function Avatar({ name, pfp, size=40 }) {
   if (pfp) return <img src={pfp} alt={name} style={{width:size,height:size,borderRadius:"50%",objectFit:"cover",flexShrink:0}}/>;
   const initials = name?.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase()||"??";
   return <div style={{width:size,height:size,borderRadius:"50%",background:`linear-gradient(135deg,${T.blue},${T.blueMid})`,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:size*0.35,fontWeight:600,flexShrink:0}}>{initials}</div>;
-}
-function Badge({ children, color=T.blue, bg=T.blueLight }) {
-  return <span style={{display:"inline-flex",alignItems:"center",gap:4,padding:"3px 8px",borderRadius:6,fontSize:11,fontWeight:600,color,background:bg}}>{children}</span>;
-}
-function Spinner({ size=16, color="#fff" }) {
-  return <div className="spin" style={{width:size,height:size,border:`2px solid ${color}40`,borderTopColor:color,borderRadius:"50%",flexShrink:0}}/>;
 }
 function DeltaPill({ current, prev }) {
   if (!prev||current===prev) return null;
@@ -656,21 +642,6 @@ function ReceiptsView({ receipts, onFlag }) {
   );
 }
 
-function NetworkView() {
-  return (
-    <motion.div key="network" initial={{opacity:0,y:16}} animate={{opacity:1,y:0}} transition={{duration:.35}}>
-      <div style={{marginBottom:24}}><h2 style={{fontSize:22,fontWeight:700,color:T.text}}>Network</h2><p style={{fontSize:13,color:T.textSub,marginTop:4}}>Live Base mainnet data · refreshes every 10s</p></div>
-      <NetworkStats/>
-      <motion.div initial={{opacity:0,y:16}} animate={{opacity:1,y:0}} transition={{delay:.2}} style={{background:T.surface,borderRadius:24,boxShadow:T.shadow,padding:"28px",marginTop:20}}>
-        <div style={{fontSize:15,fontWeight:700,color:T.text,marginBottom:16}}>RPC Endpoint</div>
-        <div style={{background:T.bg,borderRadius:12,padding:"14px 16px",fontFamily:"'Geist Mono',monospace",fontSize:12,color:T.textSub,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
-          <span>{BASE_RPC}</span><Badge color={T.green} bg={T.greenLight}>● Live</Badge>
-        </div>
-      </motion.div>
-    </motion.div>
-  );
-}
-
 function SettingsView({ profile, connected, address }) {
   const { disconnect } = useDisconnect();
   const [notifs,setNotifs]=useState(true);
@@ -707,7 +678,7 @@ function SettingsView({ profile, connected, address }) {
       </div>
       <div style={{background:T.surface,borderRadius:24,boxShadow:T.shadow,padding:"24px 28px"}}>
         <div style={{fontSize:12,fontWeight:600,color:T.textSub,letterSpacing:"0.06em",textTransform:"uppercase",marginBottom:16}}>App Info</div>
-        {[["Version","5.0.0"],["Chain","Base Mainnet (8453)"],["Trust API","basepulse-trust.onrender.com"],["Frame SDK","@farcaster/frame-sdk"]].map(([k,v])=>(
+        {[["Version","7.0.0"],["Chain","Base Mainnet (8453)"],["Trust API","basepulse-trust.onrender.com"],["Frame SDK","@farcaster/frame-sdk"]].map(([k,v])=>(
           <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${T.border}`}}>
             <span style={{fontSize:13,color:T.textSub}}>{k}</span>
             <span style={{fontSize:13,color:T.text,fontWeight:500,fontFamily:"'Geist Mono',monospace"}}>{v}</span>
@@ -727,8 +698,20 @@ export default function BasePulse() {
   const { receipts: chainReceipts, refetch: refetchReceipts } = useOnchainReceipts(address);
   const [localEvents,setLocalEvents]   = useState([]); // check-ins this session (shown alongside receipts)
   const receipts = [...localEvents, ...chainReceipts];
-  const [activeNav,setActiveNav]       = useState("pulse");
+  const [activeNav,setActiveNav]       = useState("save");
   const [notification,setNotification] = useState(null);
+  const deployment = useSavingsDeployment();
+
+  // Share links: /?circle=<id> opens the Circles tab with the join sheet.
+  const [inviteId,setInviteId] = useState(0);
+  useEffect(()=>{
+    const id = Number(new URLSearchParams(window.location.search).get("circle"));
+    if (Number.isInteger(id) && id > 0) { setInviteId(id); setActiveNav("circles"); }
+  },[]);
+  const clearInvite = useCallback(()=>{
+    setInviteId(0);
+    try { const u=new URL(window.location.href); u.searchParams.delete("circle"); window.history.replaceState(null,"",u.toString()); } catch { /* ignore */ }
+  },[]);
 
   const profile = {
     ...MOCK_PROFILE,
@@ -754,17 +737,19 @@ export default function BasePulse() {
   },[toast]);
 
   const navItems=[
-    {id:"pulse",icon:"⬡",label:"Pulse"},
+    {id:"save",icon:"🐷",label:"Save"},
+    {id:"circles",icon:"👥",label:"Circles"},
+    {id:"pulse",icon:"⬡",label:"Trust"},
     {id:"receipts",icon:"📋",label:"Receipts"},
-    {id:"network",icon:"🌐",label:"Network"},
     {id:"settings",icon:"⚙️",label:"Settings"},
   ];
 
   const renderView=()=>{
     switch(activeNav){
+      case "save":     return <SavingsHome deployment={deployment} isMiniApp={!!frameCtx} toast={toast}/>;
+      case "circles":  return <CirclesView deployment={deployment} inviteId={inviteId} clearInvite={clearInvite} toast={toast}/>;
       case "pulse":    return <DashboardView profile={profile} receipts={receipts} onMint={handleMint} onFlag={handleFlag} walletConnected={isConnected} address={address} onCheckIn={handleCheckIn} scoreLoading={scoreLoading}/>;
       case "receipts": return <ReceiptsView receipts={receipts} onFlag={handleFlag}/>;
-      case "network":  return <NetworkView/>;
       case "settings": return <SettingsView profile={profile} connected={isConnected} address={address}/>;
       default:         return null;
     }
@@ -774,18 +759,18 @@ export default function BasePulse() {
     <div style={{minHeight:"100vh",background:T.bg,fontFamily:"'Geist','Inter',sans-serif"}}>
       <GlobalStyles/>
       <div style={{position:"sticky",top:0,zIndex:50,background:"rgba(249,250,251,0.85)",backdropFilter:"blur(16px)",borderBottom:`1px solid ${T.border}`}}>
-        <div style={{maxWidth:1100,margin:"0 auto",padding:"0 20px",height:60,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <div style={{maxWidth:1100,margin:"0 auto",padding:"0 16px",height:60,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <div style={{width:32,height:32,borderRadius:9,background:`linear-gradient(135deg,${T.blue},#3B73FF)`,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:T.shadowBlue,fontSize:16}}>⬡</div>
             <span style={{fontSize:17,fontWeight:700,color:T.text,letterSpacing:"-0.03em"}}>Base<span style={{color:T.blue}}>Pulse</span></span>
             <Badge color={T.blue} bg={T.blueLight}>Beta</Badge>
           </div>
-          <ConnectButton/>
+          <ConnectButton showBalance={false} chainStatus="icon" accountStatus={{smallScreen:"avatar",largeScreen:"full"}}/>
         </div>
       </div>
-      <div style={{maxWidth:1100,margin:"0 auto",padding:"24px 20px 100px"}}>
-        <div style={{marginBottom:20}}><FrameContextBanner frameCtx={frameCtx}/></div>
-        {activeNav==="pulse"&&<div style={{marginBottom:28}}><h1 style={{fontSize:28,fontWeight:700,color:T.text,letterSpacing:"-0.04em",lineHeight:1.1}}>Reputation Dashboard</h1><p style={{fontSize:14,color:T.textSub,marginTop:6}}>Your on-chain identity layer on Base</p></div>}
+      <div style={{maxWidth:1100,margin:"0 auto",padding:"20px 16px 110px"}}>
+        {(activeNav==="pulse"||frameCtx)&&<div style={{marginBottom:16,maxWidth:activeNav==="pulse"?undefined:560,marginLeft:"auto",marginRight:"auto"}}><FrameContextBanner frameCtx={frameCtx}/></div>}
+        {activeNav==="pulse"&&<div style={{marginBottom:28}}><h1 style={{fontSize:28,fontWeight:700,color:T.text,letterSpacing:"-0.04em",lineHeight:1.1}}>Trust & Activity</h1><p style={{fontSize:14,color:T.textSub,marginTop:6}}>Your trust score, receipts, check-ins and Base network stats</p></div>}
         <AnimatePresence mode="wait">
           <motion.div key={activeNav} initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} transition={{duration:.18}}>
             {renderView()}
@@ -797,7 +782,7 @@ export default function BasePulse() {
           const active=activeNav===item.id;
           return (
             <button key={item.id} onClick={()=>setActiveNav(item.id)}
-              style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,background:"none",border:"none",padding:"4px 16px",color:active?T.blue:T.textMuted,transition:"color 0.15s",position:"relative"}}>
+              style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,background:"none",border:"none",padding:"4px 0",flex:1,color:active?T.blue:T.textMuted,transition:"color 0.15s",position:"relative"}}>
               {active&&<motion.div layoutId="nav-dot" style={{position:"absolute",top:-10,width:4,height:4,borderRadius:"50%",background:T.blue}}/>}
               <motion.div animate={{scale:active?1.18:1,y:active?-1:0}} transition={{type:"spring",stiffness:400,damping:20}} style={{fontSize:20}}>{item.icon}</motion.div>
               <span style={{fontSize:10,fontWeight:active?600:400}}>{item.label}</span>
